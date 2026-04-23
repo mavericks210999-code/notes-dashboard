@@ -6,11 +6,15 @@
   <title>Scratchpad</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;1,8..60,400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Inter:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body, #root { width: 100%; height: 100%; overflow: hidden; }
     body { -webkit-font-smoothing: antialiased; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.25); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.45); }
   </style>
 </head>
 <body>
@@ -24,13 +28,13 @@
     function loadData() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        return raw ? JSON.parse(raw) : { notes: [], theme: 'light' };
-      } catch { return { notes: [], theme: 'light' }; }
+        return raw ? JSON.parse(raw) : { notes: [], theme: 'light', fontSize: 17 };
+      } catch { return { notes: [], theme: 'light', fontSize: 17 }; }
     }
 
-    function saveData(notes, theme) {
+    function saveData(notes, theme, fontSize) {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ notes, theme }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ notes, theme, fontSize }));
       } catch {}
     }
 
@@ -115,46 +119,61 @@
       const [text, setText] = React.useState('');
       const [hoverId, setHoverId] = React.useState(null);
       const [pendingDelete, setPendingDelete] = React.useState(null);
+      const [fontSize, setFontSize] = React.useState(initial.fontSize || 17);
+      // mobile: sidebar overlays editor on narrow screens
+      const [isMobile, setIsMobile] = React.useState(window.innerWidth < 640);
+
       const undoTimer = React.useRef(null);
       const taRef = React.useRef(null);
 
-      // Refs for beforeunload (always has fresh values)
       const textRef = React.useRef(text);
       const activeIdRef = React.useRef(activeId);
       const notesRef = React.useRef(notes);
       const themeRef = React.useRef(theme);
+      const fontSizeRef = React.useRef(fontSize);
       React.useEffect(() => { textRef.current = text; }, [text]);
       React.useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
       React.useEffect(() => { notesRef.current = notes; }, [notes]);
       React.useEffect(() => { themeRef.current = theme; }, [theme]);
+      React.useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
 
-      // Save theme changes immediately
+      // Persist theme + fontSize changes immediately
       React.useEffect(() => {
-        saveData(notesRef.current, theme);
+        saveData(notesRef.current, theme, fontSizeRef.current);
       }, [theme]);
+      React.useEffect(() => {
+        saveData(notesRef.current, themeRef.current, fontSize);
+      }, [fontSize]);
 
-      // Save text to history on exit
+      // Responsive listener
+      React.useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < 640);
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+      }, []);
+
+      // Close sidebar when clicking editor on mobile
+      const handleEditorClick = () => {
+        if (isMobile && open) setOpen(false);
+      };
+
+      // Save on exit
       React.useEffect(() => {
         const handleUnload = () => {
           const t = textRef.current.trim();
           const currentNotes = notesRef.current;
           const aid = activeIdRef.current;
-          let updated;
-          if (!t) {
-            // nothing typed — still persist theme
-            saveData(currentNotes, themeRef.current);
-            return;
-          }
+          if (!t) { saveData(currentNotes, themeRef.current, fontSizeRef.current); return; }
           const ts = formatTs();
+          let updated;
           if (aid) {
             updated = currentNotes.map(n =>
               n.id === aid ? { ...n, body: textRef.current, title: textRef.current, ts } : n
             );
           } else {
-            const newNote = { id: genId(), title: textRef.current, body: textRef.current, ts };
-            updated = [newNote, ...currentNotes];
+            updated = [{ id: genId(), title: textRef.current, body: textRef.current, ts }, ...currentNotes];
           }
-          saveData(updated, themeRef.current);
+          saveData(updated, themeRef.current, fontSizeRef.current);
         };
         window.addEventListener('beforeunload', handleUnload);
         return () => window.removeEventListener('beforeunload', handleUnload);
@@ -172,10 +191,11 @@
         muted: 'rgba(235,232,224,0.50)',
         faint: 'rgba(235,232,224,0.30)',
         line: 'rgba(235,232,224,0.08)',
-        sidebarBg: '#131311',
+        sidebarBg: '#1a1a17',
         activeBg: 'rgba(235,232,224,0.06)',
         hoverBg: 'rgba(235,232,224,0.035)',
         accent: '#d6c9a8',
+        divider: 'rgba(235,232,224,0.08)',
       } : {
         bg: '#ffffff',
         fg: 'rgba(20,20,22,0.92)',
@@ -186,11 +206,15 @@
         activeBg: 'rgba(20,20,22,0.055)',
         hoverBg: 'rgba(20,20,22,0.03)',
         accent: '#2a2a2e',
+        divider: 'rgba(20,20,22,0.07)',
       };
+
+      const editorFont = '"Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", ui-sans-serif, system-ui, sans-serif';
 
       const selectNote = (n) => {
         setActiveId(n.id);
         setText(n.body);
+        if (isMobile) setOpen(false);
         if (taRef.current) taRef.current.focus();
       };
 
@@ -198,7 +222,7 @@
         const idx = notes.findIndex(x => x.id === n.id);
         const updated = notes.filter(x => x.id !== n.id);
         setNotes(updated);
-        saveData(updated, theme);
+        saveData(updated, theme, fontSize);
         if (activeId === n.id) { setActiveId(null); setText(''); }
         setPendingDelete({ note: n, index: idx });
         if (undoTimer.current) clearTimeout(undoTimer.current);
@@ -211,7 +235,7 @@
         const next = [...notes];
         next.splice(Math.min(index, next.length), 0, note);
         setNotes(next);
-        saveData(next, theme);
+        saveData(next, theme, fontSize);
         setPendingDelete(null);
         if (undoTimer.current) clearTimeout(undoTimer.current);
       };
@@ -219,10 +243,15 @@
       const newNote = () => {
         setActiveId(null);
         setText('');
+        if (isMobile) setOpen(false);
         if (taRef.current) taRef.current.focus();
       };
 
-      const btnStyle = (extra = {}) => ({
+      const changeFontSize = (delta) => {
+        setFontSize(s => Math.min(28, Math.max(12, s + delta)));
+      };
+
+      const iconBtn = (extra = {}) => ({
         appearance: 'none', background: 'transparent', border: 'none',
         color: palette.muted, cursor: 'pointer',
         width: 28, height: 28, borderRadius: 6,
@@ -231,6 +260,8 @@
         ...extra,
       });
 
+      const sidebarWidth = 272;
+
       return (
         <div style={{
           position: 'relative', width: '100%', height: '100%',
@@ -238,25 +269,44 @@
           fontFamily: '"Inter", ui-sans-serif, system-ui, sans-serif',
           overflow: 'hidden', display: 'flex',
         }}>
+
+          {/* Mobile overlay backdrop */}
+          {isMobile && open && (
+            <div
+              onClick={() => setOpen(false)}
+              style={{
+                position: 'absolute', inset: 0, zIndex: 3,
+                background: 'rgba(0,0,0,0.32)',
+              }}
+            />
+          )}
+
           {/* Sidebar */}
           <aside aria-label="History" style={{
-            position: 'relative', flex: '0 0 auto',
-            width: open ? 280 : 44,
+            position: isMobile ? 'absolute' : 'relative',
+            top: isMobile ? 0 : undefined,
+            left: isMobile ? 0 : undefined,
+            bottom: isMobile ? 0 : undefined,
+            flex: isMobile ? undefined : '0 0 auto',
+            width: open ? sidebarWidth : 44,
             transition: 'width 360ms cubic-bezier(.2,.7,.2,1)',
             borderRight: `1px solid ${open ? palette.line : 'transparent'}`,
             background: open ? palette.sidebarBg : palette.bg,
-            display: 'flex', flexDirection: 'column', zIndex: 2,
+            display: 'flex', flexDirection: 'column',
+            zIndex: isMobile ? 4 : 2,
+            height: isMobile ? '100%' : undefined,
           }}>
             {/* Top bar */}
             <div style={{
               height: 44, display: 'flex', alignItems: 'center',
               padding: open ? '0 10px 0 14px' : '0',
               justifyContent: open ? 'space-between' : 'center',
+              flexShrink: 0,
             }}>
               <button
                 onClick={() => setOpen(o => !o)}
                 aria-label={open ? 'Collapse history' : 'Expand history'}
-                style={btnStyle()}
+                style={iconBtn()}
                 onMouseEnter={e => { e.currentTarget.style.color = palette.fg; e.currentTarget.style.background = palette.hoverBg; }}
                 onMouseLeave={e => { e.currentTarget.style.color = palette.muted; e.currentTarget.style.background = 'transparent'; }}
               >
@@ -266,7 +316,7 @@
                 <button
                   onClick={newNote}
                   aria-label="New note"
-                  style={btnStyle()}
+                  style={iconBtn()}
                   onMouseEnter={e => { e.currentTarget.style.color = palette.fg; e.currentTarget.style.background = palette.hoverBg; }}
                   onMouseLeave={e => { e.currentTarget.style.color = palette.muted; e.currentTarget.style.background = 'transparent'; }}
                 >
@@ -275,7 +325,7 @@
               )}
             </div>
 
-            {/* Sidebar content */}
+            {/* Sidebar content — fades in when open */}
             <div style={{
               flex: 1, minHeight: 0,
               opacity: open ? 1 : 0,
@@ -287,11 +337,13 @@
                 padding: '2px 20px 14px',
                 fontSize: 11, letterSpacing: '0.14em',
                 textTransform: 'uppercase', color: palette.faint, fontWeight: 500,
+                flexShrink: 0,
               }}>
                 History
               </div>
 
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 8px 12px' }}>
+              {/* Note list */}
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '0 8px 8px' }}>
                 {notes.length === 0 ? (
                   <div style={{
                     padding: '32px 12px', color: palette.faint,
@@ -324,8 +376,8 @@
                           }} />
                         )}
                         <div style={{
-                          fontSize: 13, lineHeight: 1.35,
-                          color: palette.fg, fontWeight: isActive ? 500 : 400,
+                          fontSize: 13, lineHeight: 1.35, color: palette.fg,
+                          fontWeight: isActive ? 500 : 400,
                           whiteSpace: 'nowrap', overflow: 'hidden',
                           textOverflow: 'ellipsis', paddingRight: 22,
                         }}>
@@ -355,24 +407,77 @@
                   })
                 )}
               </div>
+
+              {/* Font size control — bottom of sidebar */}
+              <div style={{
+                flexShrink: 0,
+                borderTop: `1px solid ${palette.divider}`,
+                padding: '12px 16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: palette.faint, fontWeight: 500 }}>
+                  Text size
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <button
+                    onClick={() => changeFontSize(-1)}
+                    aria-label="Decrease font size"
+                    disabled={fontSize <= 12}
+                    style={{
+                      width: 26, height: 26, borderRadius: 5, border: 'none',
+                      background: 'transparent', color: fontSize <= 12 ? palette.faint : palette.muted,
+                      cursor: fontSize <= 12 ? 'default' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 16, fontWeight: 400, lineHeight: 1,
+                      transition: 'color 120ms, background 120ms',
+                    }}
+                    onMouseEnter={e => { if (fontSize > 12) { e.currentTarget.style.color = palette.fg; e.currentTarget.style.background = palette.hoverBg; } }}
+                    onMouseLeave={e => { e.currentTarget.style.color = fontSize <= 12 ? palette.faint : palette.muted; e.currentTarget.style.background = 'transparent'; }}
+                  >−</button>
+                  <span style={{ fontSize: 12, color: palette.muted, minWidth: 24, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                    {fontSize}
+                  </span>
+                  <button
+                    onClick={() => changeFontSize(1)}
+                    aria-label="Increase font size"
+                    disabled={fontSize >= 28}
+                    style={{
+                      width: 26, height: 26, borderRadius: 5, border: 'none',
+                      background: 'transparent', color: fontSize >= 28 ? palette.faint : palette.muted,
+                      cursor: fontSize >= 28 ? 'default' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 16, fontWeight: 400, lineHeight: 1,
+                      transition: 'color 120ms, background 120ms',
+                    }}
+                    onMouseEnter={e => { if (fontSize < 28) { e.currentTarget.style.color = palette.fg; e.currentTarget.style.background = palette.hoverBg; } }}
+                    onMouseLeave={e => { e.currentTarget.style.color = fontSize >= 28 ? palette.faint : palette.muted; e.currentTarget.style.background = 'transparent'; }}
+                  >+</button>
+                </div>
+              </div>
             </div>
           </aside>
 
-          {/* Editor */}
-          <main style={{
-            flex: 1, minWidth: 0, position: 'relative',
-            display: 'flex', justifyContent: 'center',
-            background: palette.bg,
-          }}>
+          {/* Main editor */}
+          <main
+            onClick={handleEditorClick}
+            style={{
+              flex: 1, minWidth: 0, position: 'relative',
+              display: 'flex', flexDirection: 'column',
+              background: palette.bg,
+              // on mobile, editor stays full-width behind the overlay
+              marginLeft: isMobile ? 44 : 0,
+            }}
+          >
+            {/* Theme toggle */}
             <button
               onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
               aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
               style={{
-                position: 'absolute', top: 12, right: 14,
+                position: 'absolute', top: 12, right: 16,
                 width: 32, height: 32, borderRadius: 8,
                 border: 'none', background: 'transparent', color: palette.muted,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                cursor: 'pointer', zIndex: 3,
+                cursor: 'pointer', zIndex: 1,
                 transition: 'color 160ms, background 160ms',
               }}
               onMouseEnter={e => { e.currentTarget.style.color = palette.fg; e.currentTarget.style.background = palette.hoverBg; }}
@@ -388,13 +493,17 @@
               placeholder="Paste or start typing…"
               spellCheck={false}
               style={{
-                width: '100%', maxWidth: 760, height: '100%',
-                padding: '72px 56px 96px',
+                flex: 1,
+                width: '100%',
+                padding: '64px 10% 80px 10%',
                 border: 'none', outline: 'none', resize: 'none',
                 background: 'transparent', color: palette.fg,
-                fontFamily: '"Source Serif 4", "Source Serif Pro", Georgia, serif',
-                fontSize: 17, lineHeight: 1.7, letterSpacing: '0.005em',
+                fontFamily: editorFont,
+                fontSize: fontSize,
+                lineHeight: 1.75,
+                letterSpacing: '0.005em',
                 caretColor: palette.accent,
+                overflowY: 'auto',
               }}
             />
             <style>{`
@@ -411,8 +520,9 @@
               display: 'flex', alignItems: 'center', gap: 14,
               padding: '9px 12px 9px 16px',
               background: isDark ? 'rgba(30,28,24,0.95)' : 'rgba(30,28,24,0.92)',
-              color: '#faf8f3', borderRadius: 8, fontSize: 13, zIndex: 4,
+              color: '#faf8f3', borderRadius: 8, fontSize: 13, zIndex: 5,
               boxShadow: '0 2px 12px rgba(0,0,0,0.15)',
+              whiteSpace: 'nowrap',
             }}>
               <span style={{ opacity: 0.85 }}>Note deleted</span>
               <button
